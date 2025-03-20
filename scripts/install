@@ -47,7 +47,7 @@ ynh_config_add_logrotate "$log_file"
 #=================================================
 ynh_script_progression "Installing dependencies..."
 
-ynh_install_app_dependencies python3 python3-pip python3-venv postgresql libpq-dev
+ynh_package_install python3 python3-pip python3-venv postgresql libpq-dev
 
 #=================================================
 # SETUP DATABASE (POSTGRESQL)
