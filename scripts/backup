@@ -6,43 +6,42 @@ source /usr/share/yunohost/helpers
 ynh_print_info "Declaring files to be backed up..."
 
 #=================================================
-# BACKUP THE APP MAIN DIR
+# BACKUP THE APP MAIN DIRECTORY
 #=================================================
-
-# /var/www/$app/
+ynh_script_progression "Backing up main application directory..."
 ynh_backup "$install_dir"
-
-# /home/yunohost.app/$app/
 ynh_backup "$data_dir"
+
+# Sauvegarder l'environnement virtuel pour éviter de tout réinstaller
+ynh_script_progression "Backing up Python virtual environment..."
+ynh_backup "$install_dir/venv"
 
 #=================================================
 # BACKUP THE NGINX CONFIGURATION
 #=================================================
-
+ynh_script_progression "Backing up Nginx configuration..."
 ynh_backup "/etc/nginx/conf.d/$domain.d/$app.conf"
 
 #=================================================
 # BACKUP THE PostgreSQL DATABASE
 #=================================================
-
-ynh_psql_dump_db > db.sql
+ynh_script_progression "Backing up PostgreSQL database..."
+pg_dump -U $postgresql_user -h localhost -d $postgresql_db > "$install_dir/db_backup.sql"
+ynh_backup "$install_dir/db_backup.sql"
 
 #=================================================
-# SPECIFIC BACKUP
+# BACKUP LOGROTATE CONFIGURATION
 #=================================================
-# BACKUP LOGROTATE
-#=================================================
-
+ynh_script_progression "Backing up logrotate configuration..."
 ynh_backup "/etc/logrotate.d/$app"
 
 #=================================================
-# BACKUP SYSTEMD
+# BACKUP SYSTEMD CONFIGURATION
 #=================================================
-
+ynh_script_progression "Backing up systemd service configuration..."
 ynh_backup "/etc/systemd/system/$app.service"
 
 #=================================================
 # END OF SCRIPT
 #=================================================
-
 ynh_print_info "Backup script completed for $app. (YunoHost will then actually copy those files to the archive)."

@@ -1,29 +1,17 @@
 """
-    urls.py
-    ~~~~~~~
-
-    Look at real examples, here:
-
-     * https://github.com/YunoHost-Apps/django-fritzconnection_ynh/blob/master/conf/urls.py
-     * https://github.com/YunoHost-Apps/django-for-runners_ynh/blob/testing/conf/urls.py
-     * https://github.com/YunoHost-Apps/pyinventory_ynh/blob/testing/conf/urls.py
-
+    urls.py - Django-Bom YunoHost URL configuration
 """
-
 
 from django.conf import settings
 from django.urls import include, path
 from django.views.generic import RedirectView
 
-
 if settings.PATH_URL:
-    # settings.PATH_URL is __PATH__
-    # Prefix all urls with "PATH_URL":
+    # Si Django-Bom est installé dans un sous-dossier (ex: /django-bom)
     urlpatterns = [
-        path('', RedirectView.as_view(url=f'{settings.PATH_URL}/')),
-        path(f'{settings.PATH_URL}/', include('django_example.urls')),
+        path('', RedirectView.as_view(url=f'/{settings.PATH_URL}/', permanent=True)),
+        path(f'{settings.PATH_URL}/', include('django_bom.urls')),
     ]
 else:
-    # Installed to domain root, without a path prefix
-    # Just use the default project urls.py
-    from django_example.urls import urlpatterns  # noqa
+    # Si Django-Bom est installé à la racine du domaine
+    from django_bom.urls import urlpatterns  # noqa

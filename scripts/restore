@@ -4,45 +4,54 @@ source ../settings/scripts/_common.sh
 source /usr/share/yunohost/helpers
 
 #=================================================
-# STANDARD RESTORATION STEPS
-#=================================================
 # RESTORE THE NGINX CONFIGURATION
 #=================================================
 ynh_script_progression "Restoring the NGINX web server configuration..."
-
 ynh_restore "/etc/nginx/conf.d/$domain.d/$app.conf"
 
 #=================================================
-# RESTORE THE APP MAIN DIR
+# RESTORE THE APP MAIN DIRECTORY
 #=================================================
 ynh_script_progression "Restoring $app main directory..."
-
 ynh_restore "$install_dir"
 ynh_restore "$data_dir"
 
+# Réappliquer les permissions
 ynh_script_progression "Set $app file permissions..."
 myynh_fix_file_permissions
 
 #=================================================
 # PYTHON VIRTUALENV
-# Maybe the backup contains a other Python version
+# Vérifie la version de Python et recrée l'environnement virtuel si nécessaire
 #=================================================
-
-# Create a new virtualenv:
+ynh_script_progression "Restoring Python virtual environment..."
+rm -rf "$install_dir/venv"
 myynh_setup_python_venv
+
+# Activer le virtualenv et installer les dépendances
+source "$install_dir/venv/bin/activate"
+ynh_script_progression "Installing dependencies..."
+pip install --upgrade pip setuptools wheel
+pip install --upgrade -r "$install_dir/requirements.txt"
 
 #=================================================
 # RESTORE THE PostgreSQL DATABASE
 #=================================================
 ynh_script_progression "Restoring the PostgreSQL database..."
 
-ynh_psql_db_shell < ./db.sql
+# Vérifier si la base existe déjà, sinon la recréer
+sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname = '$postgresql_db';" | grep -q 1
+if [ $? -ne 0 ]; then
+    sudo -u postgres psql -c "CREATE DATABASE $postgresql_db OWNER $postgresql_user;"
+fi
+
+# Restaurer la base de données
+ynh_psql_db_shell < "$install_dir/db_backup.sql"
 
 #=================================================
-# RESTORE SYSTEMD
+# RESTORE SYSTEMD SERVICE FOR GUNICORN
 #=================================================
-ynh_script_progression "Restoring the systemd $app configuration..."
-
+ynh_script_progression "Restoring the systemd configuration for $app..."
 ynh_restore "/etc/systemd/system/$app.service"
 systemctl enable $app.service --quiet
 
@@ -50,35 +59,31 @@ systemctl enable $app.service --quiet
 # INTEGRATE SERVICE IN YUNOHOST
 #=================================================
 ynh_script_progression "Integrating service in YunoHost..."
-
-yunohost service add --description $app $app
+yunohost service add --description "$app" "$app"
 
 #=================================================
-# RESTORE THE LOGROTATE CONFIGURATION
+# RESTORE LOGROTATE CONFIGURATION
 #=================================================
-ynh_script_progression "Setup logging..."
-
+ynh_script_progression "Restoring logrotate configuration..."
 myynh_setup_log_file
 ynh_restore "/etc/logrotate.d/$app"
 
 #=================================================
 # SECURE FILES AND DIRECTORIES
 #=================================================
-ynh_script_progression "Set $app file permissions..."
+ynh_script_progression "Setting correct file permissions..."
 myynh_fix_file_permissions
 
 #=================================================
-# START APP
+# START APP SERVICE
 #=================================================
 ynh_script_progression "Starting systemd service '$app'..."
-
-ynh_systemctl --service=$app --action="start" --log_path="$log_file"
+ynh_systemctl --service="$app" --action="start" --log_path="$log_file"
 
 #=================================================
 # RELOAD NGINX
 #=================================================
 ynh_script_progression "Reloading nginx web server..."
-
 ynh_systemctl --service="nginx" --action="reload"
 
 #=================================================

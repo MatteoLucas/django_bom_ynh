@@ -7,35 +7,39 @@ source /usr/share/yunohost/helpers
 # STOP SYSTEMD SERVICE
 #=================================================
 ynh_script_progression "Stopping systemd service '$app'..."
-
 ynh_systemctl --service=$app --action="stop" --log_path="$log_file"
 
 #=================================================
 # MODIFY URL IN NGINX CONF
 #=================================================
 ynh_script_progression "Updating nginx web server configuration..."
-
 ynh_config_change_url_nginx
 
 #=================================================
 # UPDATE DJANGO SETTINGS
 #=================================================
-ynh_script_progression "Update $app settings file..."
+ynh_script_progression "Updating Django settings for new domain and path..."
 
-path=$new_path
-domain=$new_domain
+# Modifier le fichier de configuration Django pour mettre à jour ALLOWED_HOSTS
+ynh_replace_string "--match_string='ALLOWED_HOSTS = .*'" "--replace_string='ALLOWED_HOSTS = [\"$new_domain\"]'" "$data_dir/settings.py"
 
-ynh_config_add --template="settings.py" --destination="$data_dir/settings.py"
+# Mettre à jour l'URL dans la configuration de l’application
+ynh_app_setting_set --key=domain --value="$new_domain"
+ynh_app_setting_set --key=path --value="$new_path"
 
 #=================================================
-# START SYSTEMD SERVICE
+# RELOAD SYSTEMD SERVICE
 #=================================================
-ynh_script_progression "Starting systemd service '$app'..."
+ynh_script_progression "Restarting systemd service '$app'..."
+ynh_systemctl --service=$app --action="restart" --log_path="$log_file"
 
-ynh_systemctl --service=$app --action="start" --log_path="$log_file"
+#=================================================
+# RELOAD NGINX
+#=================================================
+ynh_script_progression "Reloading nginx web server..."
+ynh_systemctl --service="nginx" --action="reload"
 
 #=================================================
 # END OF SCRIPT
 #=================================================
-
 ynh_script_progression "Change of URL completed for $app"

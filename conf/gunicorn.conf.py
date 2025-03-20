@@ -1,20 +1,26 @@
 """
-    Configuration for Gunicorn
+    Gunicorn Configuration for Django-Bom
+    -------------------------------------
+    Optimized for use with YunoHost and Nginx.
 """
+
 import multiprocessing
+import os
 
+# Utiliser un socket Unix pour de meilleures performances avec Nginx
+bind = 'unix:/run/django-bom.sock'
 
-bind = '127.0.0.1:__PORT__'
-
-# https://docs.gunicorn.org/en/latest/settings.html#workers
+# Nombre optimal de workers basé sur le CPU
 workers = multiprocessing.cpu_count() * 2 + 1
 
-# https://docs.gunicorn.org/en/latest/settings.html#logging
+# Niveau de log
 loglevel = 'info'
 
-# https://docs.gunicorn.org/en/latest/settings.html#logging
-accesslog = '__LOG_FILE__'
-errorlog = '__LOG_FILE__'
+# Fichiers de logs
+LOG_FILE = os.getenv('LOG_FILE', '/var/log/django-bom/gunicorn.log')
+accesslog = LOG_FILE
+errorlog = LOG_FILE
 
-# https://docs.gunicorn.org/en/latest/settings.html#pidfile
-pidfile = '__DATA_DIR__/gunicorn.pid'  # /home/yunohost.app/$app/gunicorn.pid
+# Fichier PID
+DATA_DIR = os.getenv('DATA_DIR', '/home/yunohost.app/django-bom')
+pidfile = f"{DATA_DIR}/gunicorn.pid"

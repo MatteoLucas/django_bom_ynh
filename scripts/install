@@ -7,27 +7,6 @@
 source _common.sh
 source /usr/share/yunohost/helpers
 
-# Install parameters are automatically saved as settings
-#
-# Settings are automatically loaded as bash variables
-# in every app script context, therefore typically these will exist:
-# - $domain
-# - $path
-# - $language
-# ... etc
-#
-# Resources defined in the manifest are provisioned prior to this script
-# and corresponding settings are also available, such as:
-# - $install_dir
-# - $port
-# - $db_name
-# ...
-
-#
-# $app is the app id (i.e. 'example' for first install,
-# or 'example__2', '__3', ... for multi-instance installs)
-#
-
 #=================================================
 # SETTINGS
 #=================================================
@@ -37,15 +16,14 @@ ynh_script_progression "Storing installation settings..."
 log_file="/var/log/$app/$app.log"
 ynh_app_setting_set --key=log_file --value="$log_file"
 
-# Redis:
-redis_db=$(ynh_redis_get_free_db)
-ynh_app_setting_set --key=redis_db --value="$redis_db"
+# Database (PostgreSQL instead of Redis)
+postgresql_db="${app}_db"
+postgresql_user="${app}_user"
+postgresql_pwd=$(ynh_string_random)
 
-# App settings:
-ynh_app_setting_set --key=default_from_email --value="$default_from_email"
-ynh_app_setting_set --key=admin_email --value="$admin_email"
-ynh_app_setting_set --key=debug_enabled --value="$debug_enabled"
-ynh_app_setting_set --key=log_level --value="$log_level"
+ynh_app_setting_set --key=postgresql_db --value="$postgresql_db"
+ynh_app_setting_set --key=postgresql_user --value="$postgresql_user"
+ynh_app_setting_set --key=postgresql_pwd --value="$postgresql_pwd"
 
 #=================================================
 # CHECK IF THE APP CAN BE INSTALLED WITH THESE ARGS
@@ -65,56 +43,106 @@ myynh_setup_log_file
 ynh_config_add_logrotate "$log_file"
 
 #=================================================
-# PYTHON VIRTUALENV
+# INSTALL DEPENDENCIES
 #=================================================
-cp ../conf/install_python.py "$data_dir/install_python.py"
-cp ../conf/setup_python.py "$data_dir/setup_python.py"
-cp ../conf/requirements.txt "$data_dir/requirements.txt"
-myynh_setup_python_venv
+ynh_script_progression "Installing dependencies..."
 
-#=================================================
-# copy config files
-# ================================================
-ynh_script_progression "Create $app configuration files..."
-
-ynh_config_add --template="gunicorn.conf.py" --destination="$data_dir/gunicorn.conf.py"
-
-ynh_config_add --template="manage.py" --destination="$data_dir/manage.py"
-chmod -c +x "$data_dir/manage.py"
-
-ynh_config_add --template="settings.py" --destination="$data_dir/settings.py"
-ynh_config_add --template="setup_user.py" --destination="$data_dir/setup_user.py"
-ynh_config_add --template="urls.py" --destination="$data_dir/urls.py"
-ynh_config_add --template="wsgi.py" --destination="$data_dir/wsgi.py"
-
-touch "$data_dir/local_settings.py"
+ynh_install_app_dependencies python3 python3-pip python3-venv postgresql libpq-dev
 
 #=================================================
-# MIGRATE / COLLECTSTATIC / CREATEADMIN
+# SETUP DATABASE (POSTGRESQL)
 #=================================================
-ynh_script_progression "migrate/collectstatic/createadmin..."
+ynh_script_progression "Configuring PostgreSQL database..."
 
-cd "$data_dir" || exit
-
-# Just for debugging:
-./manage.py diffsettings
-
-./manage.py migrate --no-input
-./manage.py collectstatic --no-input
-
-# Create/update Django superuser (set unusable password, because auth done via SSOwat):
-./manage.py create_superuser --username="$admin" --email="$(ynh_user_get_info --username="$admin" --key=mail)"
-
-# Check the configuration
-# This may fail in some cases with errors, etc., but the app works and the user can fix issues later.
-./manage.py check --deploy || true
+# Create PostgreSQL user and database
+sudo -u postgres psql <<EOF
+CREATE USER $postgresql_user WITH PASSWORD '$postgresql_pwd';
+CREATE DATABASE $postgresql_db OWNER $postgresql_user;
+EOF
 
 #=================================================
-# INTEGRATE SERVICE IN YUNOHOST
+# SETUP PYTHON VIRTUALENV AND INSTALL DJANGO-BOM
+#=================================================
+ynh_script_progression "Setting up Python virtual environment..."
+
+python3 -m venv "$install_dir/venv"
+source "$install_dir/venv/bin/activate"
+pip install --upgrade pip setuptools wheel
+pip install gunicorn psycopg2 django
+pip install git+https://github.com/mpkasp/django-bom.git
+
+#=================================================
+# CONFIGURE DJANGO-BOM
+#=================================================
+ynh_script_progression "Configuring Django-Bom..."
+
+# Copy Django settings and config
+ynh_config_add --template="settings.py" --destination="$install_dir/settings.py"
+ynh_config_add --template="wsgi.py" --destination="$install_dir/wsgi.py"
+
+# Migrate database
+cd "$install_dir" || exit
+source venv/bin/activate
+python manage.py migrate --no-input
+
+# Create superuser
+admin_email="$(ynh_user_get_info --username="$admin" --key=mail)"
+python manage.py createsuperuser --noinput --username="$admin" --email="$admin_email"
+
+# Collect static files
+python manage.py collectstatic --no-input
+
+#=================================================
+# CONFIGURE SYSTEMD SERVICE FOR GUNICORN
+#=================================================
+ynh_script_progression "Configuring systemd service..."
+
+cat > /etc/systemd/system/$app.service <<EOF
+[Unit]
+Description=Django-Bom Gunicorn
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=$install_dir
+ExecStart=$install_dir/venv/bin/gunicorn --workers 3 --bind unix:$install_dir/gunicorn.sock django_bom.wsgi:application
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start the service
+systemctl enable $app
+systemctl start $app
+
+#=================================================
+# CONFIGURE NGINX
+#=================================================
+ynh_script_progression "Configuring nginx web server..."
+
+cat > "/etc/nginx/conf.d/$domain.d/$app.conf" <<EOF
+server {
+    listen 80;
+    server_name $domain;
+
+    location / {
+        proxy_pass http://unix:$install_dir/gunicorn.sock;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
+
+# Restart nginx
+systemctl reload nginx
+
+#=================================================
+# SETUP YUNOHOST SERVICE
 #=================================================
 ynh_script_progression "Integrating service in YunoHost..."
 
-yunohost service add --description $app $app
+yunohost service add --description "Django-Bom" $app
 
 #=================================================
 # SECURE FILES AND DIRECTORIES
@@ -123,33 +151,6 @@ ynh_script_progression "Set $app file permissions..."
 myynh_fix_file_permissions
 
 #=================================================
-# SETUP SYSTEMD
+# FINALIZE INSTALLATION
 #=================================================
-ynh_script_progression "Configuring systemd service '$app'..."
-
-# https://yunohost.org/en/packaging_apps_helpers#ynh-add-systemd-config
-# https://github.com/YunoHost/yunohost/blob/dev/helpers/systemd
-ynh_config_add_systemd
-
-#=================================================
-# Start the app server via systemd
-#=================================================
-ynh_script_progression "Starting systemd service '$app'..."
-
-ynh_systemctl --service=$app --action="start" --log_path="$log_file"
-
-#=================================================
-# NGINX CONFIGURATION
-#=================================================
-ynh_script_progression "Configuring nginx web server..."
-
-# Create a dedicated nginx config
-# https://yunohost.org/en/contribute/packaging_apps/helpers
-# https://github.com/YunoHost/yunohost/blob/dev/helpers/nginx
-ynh_config_add_nginx "public_path" "port"
-
-#=================================================
-# END OF SCRIPT
-#=================================================
-
 ynh_script_progression "Installation of $app completed"

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 """
-    bootstrap CLI
-    ~~~~~~~~~~~~~
+    Bootstrap CLI for Django-Bom development
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     Just call this file, and the magic happens ;)
 """
@@ -36,12 +36,10 @@ else:
 assert sys.version_info >= (3, 11), f'Python version {sys.version_info} is too old!'
 
 
-if sys.platform == 'win32':  # wtf
-    # Files under Windows, e.g.: .../.venv/Scripts/python.exe
+if sys.platform == 'win32':  # Windows-specific handling
     BIN_NAME = 'Scripts'
     FILE_EXT = '.exe'
 else:
-    # Files under Linux/Mac and all other than Windows, e.g.: .../.venv/bin/python3
     BIN_NAME = 'bin'
     FILE_EXT = ''
 
@@ -52,12 +50,12 @@ PYTHON_PATH = BIN_PATH / f'python3{FILE_EXT}'
 PIP_PATH = BIN_PATH / f'pip{FILE_EXT}'
 PIP_SYNC_PATH = BIN_PATH / f'pip-sync{FILE_EXT}'
 
-DEP_LOCK_PATH = BASE_PATH / 'requirements.dev.txt'
+# 🚨 MODIFICATION : Utilisation unique de requirements.txt
+DEP_LOCK_PATH = BASE_PATH / 'requirements.txt'  
 DEP_HASH_PATH = VENV_PATH / '.dep_hash'
 
-# script file defined in pyproject.toml as [console_scripts]
-# (Under Windows: ".exe" not added!)
-PROJECT_SHELL_SCRIPT = BIN_PATH / 'django_example_ynh_dev'
+# Script défini dans `pyproject.toml` sous `[project.scripts]`
+PROJECT_SHELL_SCRIPT = BIN_PATH / 'django_bom_dev'
 
 
 def get_dep_hash():
@@ -71,7 +69,7 @@ def store_dep_hash():
 
 
 def venv_up2date():
-    """Is existing .venv is up-to-date?"""
+    """Check if existing .venv is up-to-date"""
     if DEP_HASH_PATH.is_file():
         return DEP_HASH_PATH.read_text() == get_dep_hash()
     return False
@@ -85,27 +83,28 @@ def verbose_check_call(*popen_args):
 def main(argv):
     assert DEP_LOCK_PATH.is_file(), f'File not found: "{DEP_LOCK_PATH}" !'
 
-    # Create virtual env in ".venv/":
+    # Créer un environnement virtuel si inexistant
     if not PYTHON_PATH.is_file():
-        print(f'Create virtual env here: {VENV_PATH.absolute()}')
+        print(f'Creating virtual environment at: {VENV_PATH.absolute()}')
         builder = venv.EnvBuilder(symlinks=True, upgrade=True, with_pip=True)
         builder.create(env_dir=VENV_PATH)
 
+    # Mettre à jour les dépendances si nécessaire
     if not PROJECT_SHELL_SCRIPT.is_file() or not venv_up2date():
-        # Update pip
         verbose_check_call(PYTHON_PATH, '-m', 'pip', 'install', '-U', 'pip')
 
-        # Install pip-tools
+        # Installer pip-tools
         verbose_check_call(PYTHON_PATH, '-m', 'pip', 'install', '-U', 'pip-tools')
 
-        # install requirements via "pip-sync"
+        # 🚨 MODIFICATION : Installation des dépendances depuis requirements.txt
         verbose_check_call(PIP_SYNC_PATH, str(DEP_LOCK_PATH))
 
-        # install project
+        # Installer Django-Bom en mode développement
         verbose_check_call(PIP_PATH, 'install', '--no-deps', '-e', '.')
+
         store_dep_hash()
 
-    # Call our entry point CLI:
+    # Lancer le CLI du projet
     try:
         verbose_check_call(PROJECT_SHELL_SCRIPT, *argv[1:])
     except subprocess.CalledProcessError as err:

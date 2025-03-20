@@ -1,186 +1,113 @@
 ################################################################################
+# Django-Bom YunoHost Settings
 ################################################################################
 
-# Please do not modify this file, it will be reset at the next update.
-# You can edit the file __DATA_DIR__/local_settings.py and add/modify the settings you need.
-# The parameters you add in local_settings.py will overwrite these,
-# but you can use the options and documentation in this file to find out what can be done.
+import os
+from pathlib import Path
 
-################################################################################
-################################################################################
+# Directories
+DATA_DIR_PATH = Path(os.getenv('DATA_DIR', '/home/yunohost.app/django-bom'))
+INSTALL_DIR_PATH = Path(os.getenv('INSTALL_DIR', '/var/www/django-bom'))
 
-from pathlib import Path as __Path
+LOG_FILE_PATH = Path(os.getenv('LOG_FILE', f'/var/log/django-bom/django-bom.log'))
 
-from django_yunohost_integration.base_settings import *  # noqa:F401,F403
-from django_yunohost_integration.secret_key import get_or_create_secret as __get_or_create_secret
+# YunoHost Domain and Path
+YNH_CURRENT_HOST = os.getenv('YNH_CURRENT_HOST', 'localhost')
+PATH_URL = os.getenv('PATH', '').strip('/')
 
+# -------------------------------------------------------------------
+# DEBUG & LOGGING SETTINGS (From YunoHost Panel)
+# -------------------------------------------------------------------
+DEBUG = os.getenv('DEBUG_ENABLED', '0') == '1'
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'WARNING')
 
-# https://github.com/jedie/django-example
-from django_example.settings.prod import *  # noqa:F401,F403 isort:skip
-
-
-from django_yunohost_integration.base_settings import LOGGING  # noqa:F401 isort:skip
-
-
-DATA_DIR_PATH = __Path('__DATA_DIR__')  # /home/yunohost.app/$app/
-assert DATA_DIR_PATH.is_dir(), f'Directory not exists: {DATA_DIR_PATH}'
-
-INSTALL_DIR_PATH = __Path('__INSTALL_DIR__')  # /var/www/$app/
-assert INSTALL_DIR_PATH.is_dir(), f'Directory not exists: {INSTALL_DIR_PATH}'
-
-LOG_FILE_PATH = __Path('__LOG_FILE__')  # /var/log/$app/django_example_ynh.log
-assert LOG_FILE_PATH.is_file(), f'File not exists: {LOG_FILE_PATH}'
-
-PATH_URL = '__PATH__'
-PATH_URL = PATH_URL.strip('/')
-
-YNH_CURRENT_HOST = '__YNH_CURRENT_HOST__'  # YunoHost main domain from: /etc/yunohost/current_host
-
-# -----------------------------------------------------------------------------
-# config_panel.toml settings:
-
-DEBUG_ENABLED = '__DEBUG_ENABLED__'
-DEBUG = DEBUG_ENABLED == '1'
-
-LOG_LEVEL = '__LOG_LEVEL__'
-ADMIN_EMAIL = '__ADMIN_EMAIL__'
-DEFAULT_FROM_EMAIL = '__DEFAULT_FROM_EMAIL__'
-
-
-# -----------------------------------------------------------------------------
-
-# Function that will be called to finalize a user profile:
-YNH_SETUP_USER = 'setup_user.setup_project_user'
-
-
-if 'axes' not in INSTALLED_APPS:
-    INSTALLED_APPS.append('axes')  # https://github.com/jazzband/django-axes
-
-INSTALLED_APPS.append('django_yunohost_integration.apps.YunohostIntegrationConfig')
-
-
-SECRET_KEY = __get_or_create_secret(
-    DATA_DIR_PATH / 'secret.txt'
-)  # /home/yunohost.app/$app/secret.txt
-
-
-MIDDLEWARE.insert(
-    MIDDLEWARE.index('django.contrib.auth.middleware.AuthenticationMiddleware') + 1,
-    # login a user via HTTP_REMOTE_USER header from SSOwat:
-    'django_yunohost_integration.sso_auth.auth_middleware.SSOwatRemoteUserMiddleware',
-)
-if 'axes.middleware.AxesMiddleware' not in MIDDLEWARE:
-    # AxesMiddleware should be the last middleware:
-    MIDDLEWARE.append('axes.middleware.AxesMiddleware')
-
-
-# Keep ModelBackend around for per-user permissions and superuser
-AUTHENTICATION_BACKENDS = (
-    'axes.backends.AxesBackend',  # AxesBackend should be the first backend!
-    #
-    # Authenticate via SSO and nginx 'HTTP_REMOTE_USER' header:
-    'django_yunohost_integration.sso_auth.auth_backend.SSOwatUserBackend',
-    #
-    # Fallback to normal Django model backend:
-    'django.contrib.auth.backends.ModelBackend',
-)
-
-LOGIN_REDIRECT_URL = None
-LOGIN_URL = '/yunohost/sso/'
-LOGOUT_REDIRECT_URL = '/yunohost/sso/'
-# /yunohost/sso/?action=logout
-
-ROOT_URLCONF = 'urls'  # .../conf/urls.py
-
-# -----------------------------------------------------------------------------
-
-
-ADMINS = (('__ADMIN__', ADMIN_EMAIL),)
-
-MANAGERS = ADMINS
-
+# -------------------------------------------------------------------
+# DATABASE CONFIGURATION (POSTGRESQL)
+# -------------------------------------------------------------------
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': '__DB_NAME__',
-        'USER': '__DB_USER__',
-        'PASSWORD': '__DB_PWD__',
+        'NAME': os.getenv('POSTGRES_DB', 'django_bom_db'),
+        'USER': os.getenv('POSTGRES_USER', 'django_bom_user'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
         'HOST': '127.0.0.1',
-        'PORT': '5432',  # Default Postgres Port
+        'PORT': '5432',
         'CONN_MAX_AGE': 600,
     }
 }
 
-# Title of site to use
-SITE_TITLE = '__APP__'
-
-# Site domain
-SITE_DOMAIN = '__DOMAIN__'
-
-# Subject of emails includes site title
-EMAIL_SUBJECT_PREFIX = f'[{SITE_TITLE}] '
-
-
-# E-mail address that error messages come from.
+# -------------------------------------------------------------------
+# EMAIL CONFIGURATION
+# -------------------------------------------------------------------
+ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', f'admin@{YNH_CURRENT_HOST}')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', f'django-bom@{YNH_CURRENT_HOST}')
 SERVER_EMAIL = ADMIN_EMAIL
 
-# Default email address to use for various automated correspondence from
-# the site managers. Used for registration emails.
+ADMINS = (('Admin', ADMIN_EMAIL),)
+MANAGERS = ADMINS
 
-# List of URLs your site is supposed to serve
-ALLOWED_HOSTS = ['__DOMAIN__']
+# -------------------------------------------------------------------
+# DOMAIN & SECURITY SETTINGS
+# -------------------------------------------------------------------
+SITE_DOMAIN = os.getenv('DOMAIN', YNH_CURRENT_HOST)
 
-# _____________________________________________________________________________
-# Configuration for caching
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/__REDIS_DB__',
-        # If redis is running on same host as Django Example, you might
-        # want to use unix sockets instead:
-        # 'LOCATION': 'unix:///var/run/redis/redis.sock?db=1',
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        },
-        'KEY_PREFIX': '__APP__',
-    },
-}
-
-# _____________________________________________________________________________
-# Static files (CSS, JavaScript, Images)
-
+ALLOWED_HOSTS = [SITE_DOMAIN]
 if PATH_URL:
-    STATIC_URL = f'/{PATH_URL}/static/'
-    MEDIA_URL = f'/{PATH_URL}/media/'
-else:
-    # Installed to domain root, without a path prefix?
-    STATIC_URL = '/static/'
-    MEDIA_URL = '/media/'
+    ALLOWED_HOSTS.append(f"{SITE_DOMAIN}/{PATH_URL}")
+
+# -------------------------------------------------------------------
+# AUTHENTICATION & LOGIN (SSO)
+# -------------------------------------------------------------------
+LOGIN_URL = '/yunohost/sso/'
+LOGOUT_REDIRECT_URL = '/yunohost/sso/'
+LOGIN_REDIRECT_URL = None
+
+AUTHENTICATION_BACKENDS = (
+    'django.contrib.auth.backends.ModelBackend',
+)
+
+# -------------------------------------------------------------------
+# STATIC & MEDIA FILES CONFIGURATION
+# -------------------------------------------------------------------
+STATIC_URL = f'/{PATH_URL}/static/' if PATH_URL else '/static/'
+MEDIA_URL = f'/{PATH_URL}/media/' if PATH_URL else '/media/'
 
 STATIC_ROOT = str(INSTALL_DIR_PATH / 'static')
 MEDIA_ROOT = str(INSTALL_DIR_PATH / 'media')
 
-
-# -----------------------------------------------------------------------------
-
-# Set log file to e.g.: /var/log/$app/$app.log
-LOGGING['handlers']['log_file']['filename'] = str(LOG_FILE_PATH)
-
-LOGGING['loggers']['django_yunohost_integration'] = { # TODO: Move to django_yunohost_integration base settings
-    'handlers': ['syslog', 'log_file', 'mail_admins'],
-    'propagate': False,
+# -------------------------------------------------------------------
+# LOGGING CONFIGURATION
+# -------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'file': {
+            'level': LOG_LEVEL,
+            'class': 'logging.FileHandler',
+            'filename': str(LOG_FILE_PATH),
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['file'],
+        'level': LOG_LEVEL,
+    },
 }
 
-# Example how to add logging to own app:
-LOGGING['loggers']['django_example'] = {
-    'handlers': ['syslog', 'log_file', 'mail_admins'],
-    'propagate': False,
-}
-for __logger_name in LOGGING['loggers'].keys():
-    LOGGING['loggers'][__logger_name]['level'] = 'DEBUG' if DEBUG else LOG_LEVEL
-
-# -----------------------------------------------------------------------------
-
+# -------------------------------------------------------------------
+# LOAD LOCAL SETTINGS IF AVAILABLE
+# -------------------------------------------------------------------
 try:
     from local_settings import *  # noqa:F401,F403
 except ImportError:

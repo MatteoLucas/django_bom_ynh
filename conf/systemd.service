@@ -6,40 +6,28 @@ After=network.target redis.service postgresql.service
 User=__APP__
 WorkingDirectory=__DATA_DIR__/
 
-ExecStart=__DATA_DIR__/.venv/bin/gunicorn --config __DATA_DIR__/gunicorn.conf.py wsgi
+# Activation du venv et lancement de Gunicorn
+ExecStart=__DATA_DIR__/venv/bin/gunicorn --config __DATA_DIR__/gunicorn.conf.py wsgi
 
-
-#____________________________________________________________________________________
-# Below copy&paste from:
-# https://github.com/YunoHost-Apps/homeassistant_ynh/blob/master/conf/systemd.service
-
-
+# Gestion des redémarrages et logs
 RestartForceExitStatus=100
 Restart=on-failure
 RestartSec=5s
 StandardOutput=append:__LOG_FILE__
 StandardError=inherit
 
-# Sandboxing options to harden security
-# Depending on specificities of your service/app, you may need to tweak these
-# .. but this should be a good baseline
-# Details for these options: https://www.freedesktop.org/software/systemd/man/systemd.exec.html
+# Sécurité renforcée via systemd (sandboxing)
 NoNewPrivileges=yes
 PrivateTmp=yes
-#CANT BE ACTIVATED FOR __APP__ #PrivateDevices=yes
-#CANT BE ACTIVATED FOR __APP__ #RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes
-#CANT BE ACTIVATED FOR __APP__ (see issue #40) #DevicePolicy=closed
 ProtectSystem=full
 ProtectControlGroups=yes
 ProtectKernelModules=yes
-# ProtectKernelTunables=yes
 LockPersonality=yes
 SystemCallFilter=~@clock @debug @module @mount @obsolete @reboot @setuid @swap
 
-# Denying access to capabilities that should not be relevant for webapps
-# Doc: https://man7.org/linux/man-pages/man7/capabilities.7.html
+# Restrictions des capacités système pour éviter l'élévation de privilèges
 CapabilityBoundingSet=~CAP_RAWIO CAP_MKNOD
 CapabilityBoundingSet=~CAP_AUDIT_CONTROL CAP_AUDIT_READ CAP_AUDIT_WRITE
 CapabilityBoundingSet=~CAP_SYS_BOOT CAP_SYS_TIME CAP_SYS_MODULE CAP_SYS_PACCT

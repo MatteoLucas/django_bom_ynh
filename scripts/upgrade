@@ -8,7 +8,7 @@ source _common.sh
 source /usr/share/yunohost/helpers
 
 #-------------------------------------------------
-# config_panel.toml settings:
+# LOAD SETTINGS FROM config_panel.toml
 
 if [ -z "$debug_enabled" ]; then
 	debug_enabled="0"
@@ -31,93 +31,69 @@ if [ -z "$default_from_email" ]; then
 fi
 
 #=================================================
-# CLEANUP OLD FILES
-#=================================================
-# old: "$data_dir/venv" -> cleanup
-# now: "$data_dir/.venv"
-ynh_safe_rm "$data_dir/venv"
-
-#=================================================
 # STOP SYSTEMD SERVICE
 #=================================================
 ynh_script_progression "Stopping systemd service '$app'..."
-
 ynh_systemctl --service=$app --action="stop" --log_path="$log_file"
+
+#=================================================
+# REMOVE OLD FILES AND CLEANUP
+#=================================================
+ynh_script_progression "Removing old virtual environment..."
+rm -rf "$install_dir/venv"
 
 #=================================================
 # SETUP SYSTEMD
 #=================================================
-ynh_script_progression "Configuring systemd service '$app'..."
-
+ynh_script_progression "Reconfiguring systemd service '$app'..."
 ynh_config_add_systemd
 
 #=================================================
-# PYTHON VIRTUALENV
+# PYTHON VIRTUALENV & DEPENDENCIES UPDATE
 #=================================================
-cp ../conf/install_python.py "$data_dir/install_python.py"
-cp ../conf/setup_python.py "$data_dir/setup_python.py"
-cp ../conf/requirements.txt "$data_dir/requirements.txt"
-myynh_setup_python_venv
+ynh_script_progression "Creating new Python virtual environment..."
+python3 -m venv "$install_dir/venv"
 
-#=================================================
-# copy config files
-# ================================================
-ynh_script_progression "Create project configuration files..."
+# Activer le virtualenv
+source "$install_dir/venv/bin/activate"
 
-ynh_config_add --template="gunicorn.conf.py" --destination="$data_dir/gunicorn.conf.py"
-
-ynh_config_add --template="manage.py" --destination="$data_dir/manage.py"
-chmod -c +x "$data_dir/manage.py"
-
-ynh_config_add --template="settings.py" --destination="$data_dir/settings.py"
-ynh_config_add --template="setup_user.py" --destination="$data_dir/setup_user.py"
-ynh_config_add --template="urls.py" --destination="$data_dir/urls.py"
-ynh_config_add --template="wsgi.py" --destination="$data_dir/wsgi.py"
+# Mettre à jour pip et installer les dépendances
+ynh_script_progression "Installing/updating dependencies..."
+pip install --upgrade pip setuptools wheel
+pip install --upgrade -r "$install_dir/requirements.txt"
 
 #=================================================
-# MIGRATE APP
+# UPDATE DJANGO-BOM
 #=================================================
-ynh_script_progression "migrate/collectstatic/createadmin..."
+ynh_script_progression "Updating Django-Bom and dependencies..."
+pip install --upgrade git+https://github.com/mpkasp/django-bom.git
 
-cd "$data_dir" || exit
+#=================================================
+# MIGRATE DATABASE
+#=================================================
+ynh_script_progression "Applying database migrations..."
+cd "$install_dir" || exit
+source venv/bin/activate
 
-# Just for debugging:
-./manage.py diffsettings
-
-./manage.py migrate --no-input
-./manage.py collectstatic --no-input
+python manage.py migrate --no-input
+python manage.py collectstatic --no-input --clear
 
 # Create/update Django superuser (set unusable password, because auth done via SSOwat):
-./manage.py create_superuser --username="$admin" --email="$(ynh_user_get_info --username="$admin" --key=mail)"
-
-# Check the configuration
-# This may fail in some cases with errors, etc., but the app works and the user can fix issues later.
-./manage.py check --deploy || true
+python manage.py createsuperuser --username="$admin" --email="$(ynh_user_get_info --username="$admin" --key=mail)" || true
 
 #=================================================
-# SETUP LOGROTATE
+# RESTART SYSTEMD SERVICE
 #=================================================
-ynh_script_progression "Upgrading logrotate configuration..."
-
-# Use logrotate to manage app-specific logfile(s)
-ynh_config_add_logrotate "$log_file"
-
-#=================================================
-# SECURE FILES AND DIRECTORIES
-#=================================================
-ynh_script_progression "Set $app file permissions..."
-myynh_fix_file_permissions
-
-#=================================================
-# Start the app server via systemd
-#=================================================
-ynh_script_progression "Starting systemd service '$app'..."
-
-yunohost service add --description $app $app
+ynh_script_progression "Restarting systemd service '$app'..."
 ynh_systemctl --service=$app --action="start" --log_path="$log_file"
+
+#=================================================
+# RELOAD NGINX
+#=================================================
+ynh_script_progression "Reloading Nginx web server..."
+ynh_systemctl --service="nginx" --action="reload"
 
 #=================================================
 # END OF SCRIPT
 #=================================================
-
-ynh_script_progression "Upgrade of $app completed"
+ynh_script_progression "Upgrade of $app completed successfully!"
