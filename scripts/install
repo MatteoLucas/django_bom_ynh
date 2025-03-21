@@ -43,7 +43,10 @@ mkdir -p "$install_dir/media" "$install_dir/static"
 ynh_script_progression --message="Setup logging..."
 
 myynh_setup_log_file
-ynh_use_logrotate --logfile="$log_file" --specific_user=$app
+# chat GPT : ynh_use_logrotate --logfile="$log_file" --specific_user=$app
+# Use logrotate to manage application logfile(s)
+ynh_config_add_logrotate "$log_file"
+
 
 #=================================================
 # INSTALL DEPENDENCIES
