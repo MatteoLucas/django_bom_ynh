@@ -83,6 +83,7 @@ fi
 ynh_script_progression --message="Create and setup Python virtualenv..."
 cp ../conf/setup_python.py "$data_dir/setup_python.py"
 cp ../conf/requirements.txt "$data_dir/requirements.txt"
+cp -r ../conf/django_bom "$data_dir/"
 myynh_setup_python_venv
 
 #=================================================
