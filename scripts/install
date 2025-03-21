@@ -90,14 +90,14 @@ myynh_setup_python_venv
 #=================================================
 ynh_script_progression --message="Creating $app configuration files..."
 
-ynh_add_config --template="gunicorn.conf.py" --destination="$data_dir/gunicorn.conf.py"
-ynh_add_config --template="manage.py" --destination="$data_dir/manage.py"
+ynh_config_add --template="gunicorn.conf.py" --destination="$data_dir/gunicorn.conf.py"
+ynh_config_add --template="manage.py" --destination="$data_dir/manage.py"
 chmod +x "$data_dir/manage.py"
 
-ynh_add_config --template="settings.py" --destination="$data_dir/settings.py"
-ynh_add_config --template="setup_user.py" --destination="$data_dir/setup_user.py"
-ynh_add_config --template="urls.py" --destination="$data_dir/urls.py"
-ynh_add_config --template="wsgi.py" --destination="$data_dir/wsgi.py"
+ynh_config_add --template="settings.py" --destination="$data_dir/settings.py"
+ynh_config_add --template="setup_user.py" --destination="$data_dir/setup_user.py"
+ynh_config_add --template="urls.py" --destination="$data_dir/urls.py"
+ynh_config_add --template="wsgi.py" --destination="$data_dir/wsgi.py"
 
 touch "$data_dir/local_settings.py"
 
@@ -127,22 +127,20 @@ yunohost service add --description "$app" "$app"
 # SETUP SYSTEMD
 #=================================================
 ynh_script_progression --message="Configuring systemd service '$app'..."
-ynh_add_systemd_config --service=$app --template="systemd.service"
+ynh_config_add_systemd
 
-# Start the service
-ynh_script_progression --message="Starting systemd service '$app'..."
-ynh_systemd_action --service_name=$app --action="start" --log_path="$log_file"
-
+ynh_script_progression "Starting systemd service '$app'..."
+ynh_systemctl --service=$app --action="start" --log_path="$log_file"
 #=================================================
 # CONFIGURE NGINX
 #=================================================
 ynh_script_progression --message="Configuring nginx web server..."
-ynh_add_nginx_config "public_path" "port"
+ynh_config_add_nginx "public_path" "port"
 
 #=================================================
 # FINALIZATION
 #=================================================
-ynh_script_progression --message="Set file permissions..."
+ynh_script_progression "Set $app file permissions..."
 myynh_fix_file_permissions
 
 ynh_script_progression --message="Installation of $app completed" --last
