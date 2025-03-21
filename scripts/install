@@ -58,18 +58,30 @@ ynh_config_add_logrotate "$log_file"
 #=================================================
 # SETUP DATABASE (POSTGRESQL)
 #=================================================
+
 ynh_script_progression --message="Configuring PostgreSQL database..."
 
-# Create PostgreSQL user and database
-sudo -u postgres psql <<EOF
-CREATE USER $postgresql_user WITH PASSWORD '$postgresql_pwd';
-CREATE DATABASE $postgresql_db OWNER $postgresql_user;
-EOF
+# Create PostgreSQL user if it doesn't exist
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$postgresql_user'" | grep -q 1; then
+    ynh_print_info "Creating PostgreSQL user '$postgresql_user'..."
+    sudo -u postgres psql -c "CREATE USER $postgresql_user WITH PASSWORD '$postgresql_pwd';"
+else
+    ynh_print_info "PostgreSQL user '$postgresql_user' already exists. Skipping."
+fi
+
+# Create PostgreSQL database if it doesn't exist
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$postgresql_db'" | grep -q 1; then
+    ynh_print_info "Creating PostgreSQL database '$postgresql_db'..."
+    sudo -u postgres psql -c "CREATE DATABASE $postgresql_db OWNER $postgresql_user;"
+else
+    ynh_print_info "PostgreSQL database '$postgresql_db' already exists. Skipping."
+fi
 
 #=================================================
 # PYTHON VIRTUALENV
 #=================================================
 ynh_script_progression --message="Create and setup Python virtualenv..."
+cp ../conf/setup_python.py "$data_dir/setup_python.py"
 cp ../conf/requirements.txt "$data_dir/requirements.txt"
 myynh_setup_python_venv
 
