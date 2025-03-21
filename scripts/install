@@ -7,153 +7,130 @@ source _common.sh
 source /usr/share/yunohost/helpers
 
 #=================================================
-# PARAMÈTRES D'INSTALLATION
+# SETTINGS
 #=================================================
 ynh_script_progression --message="Storing installation settings..."
 
-# Définition des variables essentielles
+# Logging:
 log_file="/var/log/$app/$app.log"
-postgresql_db="${app//-/_}_db"  # Remplace "-" par "_"
+ynh_app_setting_set --app=$app --key=log_file --value="$log_file"
+
+# Database (PostgreSQL)
+postgresql_db="${app//-/_}_db"  # Remplace "-" par "_" dans le nom de la DB
 postgresql_user="${app//-/_}_user"
 postgresql_pwd=$(ynh_string_random)
 
-# Enregistrer les paramètres
-ynh_app_setting_set --app=$app --key=log_file --value="$log_file"
 ynh_app_setting_set --app=$app --key=postgresql_db --value="$postgresql_db"
 ynh_app_setting_set --app=$app --key=postgresql_user --value="$postgresql_user"
 ynh_app_setting_set --app=$app --key=postgresql_pwd --value="$postgresql_pwd"
 
+# App settings
+ynh_app_setting_set --app=$app --key=default_from_email --value="$default_from_email"
+ynh_app_setting_set --app=$app --key=admin_email --value="$admin_email"
+ynh_app_setting_set --app=$app --key=debug_enabled --value="$debug_enabled"
+ynh_app_setting_set --app=$app --key=log_level --value="$log_level"
+
 #=================================================
-# VALIDATION DES PARAMÈTRES
+# CHECK IF THE APP CAN BE INSTALLED WITH THESE ARGS
 #=================================================
 ynh_script_progression --message="Validating installation parameters..."
 
-# Création des répertoires médias et statiques
 mkdir -p "$install_dir/media" "$install_dir/static"
 
 #=================================================
-# CONFIGURATION DU LOGGING
+# SETUP LOG FILE
 #=================================================
-ynh_script_progression --message="Setting up logging..."
+ynh_script_progression --message="Setup logging..."
+
 myynh_setup_log_file
+# chat GPT : ynh_use_logrotate --logfile="$log_file" --specific_user=$app
+# Use logrotate to manage application logfile(s)
 ynh_config_add_logrotate "$log_file"
 
+
 #=================================================
-# INSTALLATION DES DÉPENDANCES
+# INSTALL DEPENDENCIES
 #=================================================
 #ynh_script_progression --message="Installing dependencies..."
+
 #ynh_install_depends python3 python3-pip python3-venv postgresql libpq-dev
 
 #=================================================
-# CONFIGURATION DE LA BASE DE DONNÉES (POSTGRESQL)
+# SETUP DATABASE (POSTGRESQL)
 #=================================================
 ynh_script_progression --message="Configuring PostgreSQL database..."
 
-# Création de l'utilisateur et de la base de données
+# Create PostgreSQL user and database
 sudo -u postgres psql <<EOF
 CREATE USER $postgresql_user WITH PASSWORD '$postgresql_pwd';
 CREATE DATABASE $postgresql_db OWNER $postgresql_user;
 EOF
 
 #=================================================
-# CONFIGURATION DU PYTHON VIRTUALENV
+# PYTHON VIRTUALENV
 #=================================================
-ynh_script_progression --message="Creating and setting up Python virtualenv..."
-
-# Copier le script setup_python.py si nécessaire
-cp ../conf/setup_python.py "$install_dir/setup_python.py"
-chmod +x "$install_dir/setup_python.py"
-
-# Exécuter le script de setup Python
-sudo -u $app python3 "$install_dir/setup_python.py"
-
-# Création de l'environnement virtuel
-python3 -m venv "$install_dir/venv"
-source "$install_dir/venv/bin/activate"
-
-# Mise à jour de pip et installation des dépendances
-pip install --upgrade pip setuptools wheel
-pip install gunicorn psycopg2 django
-pip install git+https://github.com/mpkasp/django-bom.git
+ynh_script_progression --message="Create and setup Python virtualenv..."
+cp ../conf/requirements.txt "$data_dir/requirements.txt"
+myynh_setup_python_venv
 
 #=================================================
-# CONFIGURATION DE DJANGO-BOM
+# COPY CONFIGURATION FILES
 #=================================================
-ynh_script_progression --message="Configuring Django-Bom..."
+ynh_script_progression --message="Creating $app configuration files..."
 
-# Copier les fichiers de configuration Django
-ynh_config_add --template="settings.py" --destination="$install_dir/settings.py"
-ynh_config_add --template="wsgi.py" --destination="$install_dir/wsgi.py"
+ynh_add_config --template="gunicorn.conf.py" --destination="$data_dir/gunicorn.conf.py"
+ynh_add_config --template="manage.py" --destination="$data_dir/manage.py"
+chmod +x "$data_dir/manage.py"
 
-# Exécuter les migrations et collecter les fichiers statiques
-cd "$install_dir" || exit
-source venv/bin/activate
-python manage.py migrate --no-input
-python manage.py collectstatic --no-input --clear
+ynh_add_config --template="settings.py" --destination="$data_dir/settings.py"
+ynh_add_config --template="setup_user.py" --destination="$data_dir/setup_user.py"
+ynh_add_config --template="urls.py" --destination="$data_dir/urls.py"
+ynh_add_config --template="wsgi.py" --destination="$data_dir/wsgi.py"
 
-# Création d'un superuser
-admin_email="$(ynh_user_get_info --username="$admin" --key=mail)"
-python manage.py createsuperuser --noinput --username="$admin" --email="$admin_email" || true
+touch "$data_dir/local_settings.py"
 
 #=================================================
-# CONFIGURATION DU SERVICE SYSTEMD
+# MIGRATE / COLLECTSTATIC / CREATEADMIN
 #=================================================
-ynh_script_progression --message="Configuring systemd service..."
+ynh_script_progression --message="Migrating database, collecting static files, and creating admin user..."
 
-cat > /etc/systemd/system/$app.service <<EOF
-[Unit]
-Description=Django-Bom Gunicorn
-After=network.target postgresql.service
+cd "$data_dir" || exit
 
-[Service]
-User=www-data
-Group=www-data
-WorkingDirectory=$install_dir
-ExecStart=$install_dir/venv/bin/gunicorn --workers 3 --bind unix:$install_dir/gunicorn.sock django_bom.wsgi:application
+./manage.py migrate --no-input
+./manage.py collectstatic --no-input
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Create/update Django superuser (SSO)
+./manage.py create_superuser --username="$admin" --email="$(ynh_user_get_info "$admin" mail)"
 
-# Activer et démarrer le service
-systemctl enable $app
-systemctl start $app
+# Check the configuration
+./manage.py check --deploy || true
 
 #=================================================
-# CONFIGURATION NGINX
-#=================================================
-ynh_script_progression --message="Configuring nginx web server..."
-
-cat > "/etc/nginx/conf.d/$domain.d/$app.conf" <<EOF
-server {
-    listen 80;
-    server_name $domain;
-
-    location / {
-        proxy_pass http://unix:$install_dir/gunicorn.sock;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-    }
-}
-EOF
-
-# Redémarrer nginx
-systemctl reload nginx
-
-#=================================================
-# INTEGRATION AVEC YUNOHOST
+# INTEGRATE SERVICE IN YUNOHOST
 #=================================================
 ynh_script_progression --message="Integrating service in YunoHost..."
-
-yunohost service add --description "Django-Bom" $app
+yunohost service add --description "$app" "$app"
 
 #=================================================
-# SÉCURISATION DES FICHIERS ET PERMISSIONS
+# SETUP SYSTEMD
 #=================================================
-ynh_script_progression --message="Setting file permissions..."
+ynh_script_progression --message="Configuring systemd service '$app'..."
+ynh_add_systemd_config --service=$app --template="systemd.service"
+
+# Start the service
+ynh_script_progression --message="Starting systemd service '$app'..."
+ynh_systemd_action --service_name=$app --action="start" --log_path="$log_file"
+
+#=================================================
+# CONFIGURE NGINX
+#=================================================
+ynh_script_progression --message="Configuring nginx web server..."
+ynh_add_nginx_config "public_path" "port"
+
+#=================================================
+# FINALIZATION
+#=================================================
+ynh_script_progression --message="Set file permissions..."
 myynh_fix_file_permissions
 
-#=================================================
-# FINALISATION DE L'INSTALLATION
-#=================================================
 ynh_script_progression --message="Installation of $app completed" --last
