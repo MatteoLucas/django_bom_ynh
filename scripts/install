@@ -3,56 +3,59 @@
 #=================================================
 # IMPORT GENERIC HELPERS
 #=================================================
-
 source _common.sh
 source /usr/share/yunohost/helpers
 
 #=================================================
 # SETTINGS
 #=================================================
-ynh_script_progression "Storing installation settings..."
+ynh_script_progression --message="Storing installation settings..."
 
 # Logging:
 log_file="/var/log/$app/$app.log"
-ynh_app_setting_set --key=log_file --value="$log_file"
+ynh_app_setting_set --app=$app --key=log_file --value="$log_file"
 
-# Database (PostgreSQL instead of Redis)
+# Database (PostgreSQL)
 postgresql_db="${app}_db"
 postgresql_user="${app}_user"
 postgresql_pwd=$(ynh_string_random)
 
-ynh_app_setting_set --key=postgresql_db --value="$postgresql_db"
-ynh_app_setting_set --key=postgresql_user --value="$postgresql_user"
-ynh_app_setting_set --key=postgresql_pwd --value="$postgresql_pwd"
+ynh_app_setting_set --app=$app --key=postgresql_db --value="$postgresql_db"
+ynh_app_setting_set --app=$app --key=postgresql_user --value="$postgresql_user"
+ynh_app_setting_set --app=$app --key=postgresql_pwd --value="$postgresql_pwd"
+
+# App settings
+ynh_app_setting_set --app=$app --key=default_from_email --value="$default_from_email"
+ynh_app_setting_set --app=$app --key=admin_email --value="$admin_email"
+ynh_app_setting_set --app=$app --key=debug_enabled --value="$debug_enabled"
+ynh_app_setting_set --app=$app --key=log_level --value="$log_level"
 
 #=================================================
 # CHECK IF THE APP CAN BE INSTALLED WITH THESE ARGS
 #=================================================
-ynh_script_progression "Validating installation parameters..."
+ynh_script_progression --message="Validating installation parameters..."
 
 mkdir -p "$install_dir/media" "$install_dir/static"
 
 #=================================================
 # SETUP LOG FILE
 #=================================================
-ynh_script_progression "Setup logging..."
+ynh_script_progression --message="Setup logging..."
 
 myynh_setup_log_file
-
-# Use logrotate to manage application logfile(s)
-ynh_config_add_logrotate "$log_file"
+ynh_use_logrotate --logfile="$log_file" --specific_user=$app
 
 #=================================================
 # INSTALL DEPENDENCIES
 #=================================================
-ynh_script_progression "Installing dependencies..."
+#ynh_script_progression --message="Installing dependencies..."
 
-ynh_install_depends python3 python3-pip python3-venv postgresql libpq-dev
+#ynh_install_depends python3 python3-pip python3-venv postgresql libpq-dev
 
 #=================================================
 # SETUP DATABASE (POSTGRESQL)
 #=================================================
-ynh_script_progression "Configuring PostgreSQL database..."
+ynh_script_progression --message="Configuring PostgreSQL database..."
 
 # Create PostgreSQL user and database
 sudo -u postgres psql <<EOF
@@ -61,96 +64,70 @@ CREATE DATABASE $postgresql_db OWNER $postgresql_user;
 EOF
 
 #=================================================
-# SETUP PYTHON VIRTUALENV AND INSTALL DJANGO-BOM
+# PYTHON VIRTUALENV
 #=================================================
-ynh_script_progression "Setting up Python virtual environment..."
-
-python3 -m venv "$install_dir/venv"
-source "$install_dir/venv/bin/activate"
-pip install --upgrade pip setuptools wheel
-pip install gunicorn psycopg2 django
-pip install git+https://github.com/mpkasp/django-bom.git
+ynh_script_progression --message="Create and setup Python virtualenv..."
+cp ../conf/requirements.txt "$data_dir/requirements.txt"
+myynh_setup_python_venv
 
 #=================================================
-# CONFIGURE DJANGO-BOM
+# COPY CONFIGURATION FILES
 #=================================================
-ynh_script_progression "Configuring Django-Bom..."
+ynh_script_progression --message="Creating $app configuration files..."
 
-# Copy Django settings and config
-ynh_config_add --template="settings.py" --destination="$install_dir/settings.py"
-ynh_config_add --template="wsgi.py" --destination="$install_dir/wsgi.py"
+ynh_add_config --template="gunicorn.conf.py" --destination="$data_dir/gunicorn.conf.py"
+ynh_add_config --template="manage.py" --destination="$data_dir/manage.py"
+chmod +x "$data_dir/manage.py"
 
-# Migrate database
-cd "$install_dir" || exit
-source venv/bin/activate
-python manage.py migrate --no-input
+ynh_add_config --template="settings.py" --destination="$data_dir/settings.py"
+ynh_add_config --template="setup_user.py" --destination="$data_dir/setup_user.py"
+ynh_add_config --template="urls.py" --destination="$data_dir/urls.py"
+ynh_add_config --template="wsgi.py" --destination="$data_dir/wsgi.py"
 
-# Create superuser
-admin_email="$(ynh_user_get_info --username="$admin" --key=mail)"
-python manage.py createsuperuser --noinput --username="$admin" --email="$admin_email"
-
-# Collect static files
-python manage.py collectstatic --no-input
+touch "$data_dir/local_settings.py"
 
 #=================================================
-# CONFIGURE SYSTEMD SERVICE FOR GUNICORN
+# MIGRATE / COLLECTSTATIC / CREATEADMIN
 #=================================================
-ynh_script_progression "Configuring systemd service..."
+ynh_script_progression --message="Migrating database, collecting static files, and creating admin user..."
 
-cat > /etc/systemd/system/$app.service <<EOF
-[Unit]
-Description=Django-Bom Gunicorn
-After=network.target
+cd "$data_dir" || exit
 
-[Service]
-User=www-data
-Group=www-data
-WorkingDirectory=$install_dir
-ExecStart=$install_dir/venv/bin/gunicorn --workers 3 --bind unix:$install_dir/gunicorn.sock django_bom.wsgi:application
+./manage.py migrate --no-input
+./manage.py collectstatic --no-input
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Create/update Django superuser (SSO)
+./manage.py create_superuser --username="$admin" --email="$(ynh_user_get_info "$admin" mail)"
 
-# Enable and start the service
-systemctl enable $app
-systemctl start $app
+# Check the configuration
+./manage.py check --deploy || true
+
+#=================================================
+# INTEGRATE SERVICE IN YUNOHOST
+#=================================================
+ynh_script_progression --message="Integrating service in YunoHost..."
+yunohost service add --description "$app" "$app"
+
+#=================================================
+# SETUP SYSTEMD
+#=================================================
+ynh_script_progression --message="Configuring systemd service '$app'..."
+ynh_add_systemd_config --service=$app --template="systemd.service"
+
+# Start the service
+ynh_script_progression --message="Starting systemd service '$app'..."
+ynh_systemd_action --service_name=$app --action="start" --log_path="$log_file"
 
 #=================================================
 # CONFIGURE NGINX
 #=================================================
-ynh_script_progression "Configuring nginx web server..."
-
-cat > "/etc/nginx/conf.d/$domain.d/$app.conf" <<EOF
-server {
-    listen 80;
-    server_name $domain;
-
-    location / {
-        proxy_pass http://unix:$install_dir/gunicorn.sock;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-    }
-}
-EOF
-
-# Restart nginx
-systemctl reload nginx
+ynh_script_progression --message="Configuring nginx web server..."
+ynh_add_nginx_config "public_path" "port"
 
 #=================================================
-# SETUP YUNOHOST SERVICE
+# FINALIZATION
 #=================================================
-ynh_script_progression "Integrating service in YunoHost..."
-
-yunohost service add --description "Django-Bom" $app
-
-#=================================================
-# SECURE FILES AND DIRECTORIES
-#=================================================
-ynh_script_progression "Set $app file permissions..."
+ynh_script_progression --message="Set file permissions..."
 myynh_fix_file_permissions
 
-#=================================================
-# FINALIZE INSTALLATION
-#=================================================
-ynh_script_progression "Installation of $app completed"
+ynh_script_progression --message="Installation of $app completed" --last
